@@ -1,0 +1,300 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>API tester</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: monospace; padding: 40px; background: #0e0e0e; color: #d4d0c8; }
+  h1   { font-size: 16px; color: #a8ff78; margin-bottom: 24px; }
+
+  label { font-size: 11px; color: #5a5a5a; display: block; margin-bottom: 4px; }
+
+  select, input, textarea {
+    background: #1a1a1a;
+    border: 1px solid #2e2e2e;
+    color: #d4d0c8;
+    font-family: monospace;
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  select:focus, input:focus, textarea:focus { border-color: #a8ff78; }
+
+  .section { margin-bottom: 20px; }
+
+  /* フォーム行 */
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .row input { flex: 1; }
+  select { width: 110px; flex-shrink: 0; }
+
+  /* ヘッダー行 */
+  .header-row { display: flex; gap: 8px; margin-bottom: 6px; }
+  .header-row input.key   { width: 180px; flex: none; }
+  .header-row input.val   { flex: 1; }
+  .del {
+    background: none; border: 1px solid #2e2e2e; color: #5a5a5a;
+    font-family: monospace; font-size: 11px; padding: 8px 10px;
+    border-radius: 4px; cursor: pointer;
+  }
+  .del:hover { border-color: #ff6b6b; color: #ff6b6b; }
+
+  .add-header {
+    background: none; border: 1px solid #2e2e2e; color: #5a5a5a;
+    font-family: monospace; font-size: 11px; padding: 6px 14px;
+    border-radius: 4px; cursor: pointer;
+  }
+  .add-header:hover { border-color: #a8ff78; color: #a8ff78; }
+
+  /* curlエリア */
+  .curl-area {
+    position: relative;
+    margin-bottom: 20px;
+  }
+  .curl-area textarea {
+    width: 100%;
+    height: 90px;
+    resize: vertical;
+    line-height: 1.6;
+    color: #a8ff78;
+  }
+  .curl-label {
+    font-size: 11px; color: #5a5a5a; margin-bottom: 4px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .copy-btn {
+    background: none; border: 1px solid #2e2e2e; color: #5a5a5a;
+    font-family: monospace; font-size: 10px; padding: 3px 10px;
+    border-radius: 3px; cursor: pointer;
+  }
+  .copy-btn:hover { border-color: #a8ff78; color: #a8ff78; }
+
+  /* 区切り */
+  .divider {
+    display: flex; align-items: center; gap: 12px;
+    margin: 16px 0; color: #2e2e2e; font-size: 11px;
+  }
+  .divider::before, .divider::after {
+    content: ''; flex: 1; height: 1px; background: #2e2e2e;
+  }
+
+  .send {
+    background: #a8ff78; color: #0e0e0e; border: none;
+    font-family: monospace; font-size: 12px; font-weight: bold;
+    padding: 10px 24px; border-radius: 4px; cursor: pointer; width: 100%;
+  }
+  .send:hover { background: #78ffd6; }
+
+  .status { font-size: 11px; color: #5a5a5a; margin-bottom: 6px; margin-top: 16px; }
+  .status.ok  { color: #a8ff78; }
+  .status.err { color: #ff6b6b; }
+
+  pre {
+    background: #1a1a1a; border: 1px solid #2e2e2e; border-radius: 4px;
+    padding: 16px; font-size: 12px; line-height: 1.7;
+    white-space: pre-wrap; word-break: break-all; min-height: 60px;
+  }
+</style>
+</head>
+<body>
+
+<h1>// API tester</h1>
+
+<!-- フォーム側 -->
+<div class="section">
+  <label>メソッド / エンドポイント</label>
+  <div class="row">
+    <select id="method" oninput="formToCurl()">
+      <option>GET</option>
+      <option>POST</option>
+      <option>DELETE</option>
+    </select>
+    <input type="text" id="url" placeholder="https://api.github.com/user/repos" oninput="formToCurl()">
+  </div>
+</div>
+
+<div class="section">
+  <label>ヘッダー</label>
+  <div id="headers"></div>
+  <button class="add-header" onclick="addHeader()">+ ヘッダーを追加</button>
+</div>
+
+<div class="section">
+  <label>リクエストボディ（POST のときだけ使用）</label>
+  <div class="row">
+    <input type="text" id="body" placeholder='{"title": "タスク名"}' oninput="formToCurl()">
+  </div>
+</div>
+
+<div class="divider">↕ 双方向同期</div>
+
+<!-- curl側 -->
+<div class="curl-area">
+  <div class="curl-label">
+    <span>curl コマンド（編集するとフォームに反映）</span>
+    <button class="copy-btn" onclick="copyCurl()">copy</button>
+  </div>
+  <textarea id="curl" oninput="curlToForm()" spellcheck="false"></textarea>
+</div>
+
+<button class="send" onclick="send()">SEND</button>
+
+<div class="status" id="status"></div>
+<pre id="result">ここに結果が表示されます</pre>
+
+<script>
+  let _syncing = false; // 無限ループ防止フラグ
+
+  // =====================
+  // ヘッダー行の管理
+  // =====================
+
+  function addHeader(key = '', val = '') {
+    const container = document.getElementById('headers');
+    const row = document.createElement('div');
+    row.className = 'header-row';
+    row.innerHTML = `
+      <input class="key" type="text" placeholder="Key"   value="${esc(key)}" oninput="formToCurl()">
+      <input class="val" type="text" placeholder="Value" value="${esc(val)}" oninput="formToCurl()">
+      <button class="del" onclick="this.parentElement.remove(); formToCurl()">rm</button>
+    `;
+    container.appendChild(row);
+    return row;
+  }
+
+  function collectHeaders() {
+    const result = {};
+    document.querySelectorAll('.header-row').forEach(row => {
+      const k = row.querySelector('.key').value.trim();
+      const v = row.querySelector('.val').value.trim();
+      if (k) result[k] = v;
+    });
+    return result;
+  }
+
+  // =====================
+  // フォーム → curl
+  // =====================
+
+  function formToCurl() {
+    if (_syncing) return;
+    _syncing = true;
+
+    const method = document.getElementById('method').value;
+    const url    = document.getElementById('url').value.trim();
+    const body   = document.getElementById('body').value.trim();
+    const headers = collectHeaders();
+
+    let cmd = `curl -X ${method}`;
+    Object.entries(headers).forEach(([k, v]) => {
+      cmd += ` \\\n  -H "${k}: ${v}"`;
+    });
+    if (method === 'POST' && body) {
+      cmd += ` \\\n  -H "Content-Type: application/json"`;
+      cmd += ` \\\n  -d '${body}'`;
+    }
+    if (url) cmd += ` \\\n  "${url}"`;
+
+    document.getElementById('curl').value = cmd;
+    _syncing = false;
+  }
+
+  // =====================
+  // curl → フォーム
+  // =====================
+
+  function curlToForm() {
+    if (_syncing) return;
+    _syncing = true;
+
+    const raw = document.getElementById('curl').value
+      .replace(/\\\n/g, ' ')   // 行継続を結合
+      .replace(/\s+/g, ' ')    // 余分なスペースを整理
+      .trim();
+
+    // メソッド
+    const methodMatch = raw.match(/-X\s+(\w+)/);
+    if (methodMatch) {
+      document.getElementById('method').value = methodMatch[1];
+    }
+
+    // URL（最後にクォートで囲まれた https:// or / から始まる文字列）
+    const urlMatch = raw.match(/["']([^"']*(?:https?:\/\/|\/)[^"']*)["']/);
+    if (urlMatch) {
+      document.getElementById('url').value = urlMatch[1];
+    }
+
+    // ヘッダー
+    const headerMatches = [...raw.matchAll(/-H\s+["']([^"']+)["']/g)];
+    document.getElementById('headers').innerHTML = '';
+    headerMatches.forEach(m => {
+      const colonIdx = m[1].indexOf(':');
+      if (colonIdx === -1) return;
+      const k = m[1].slice(0, colonIdx).trim();
+      const v = m[1].slice(colonIdx + 1).trim();
+      if (k !== 'Content-Type') addHeader(k, v); // Content-Typeは自動付与なのでスキップ
+    });
+
+    // ボディ
+    const bodyMatch = raw.match(/-d\s+['"]([^'"]+)['"]/);
+    document.getElementById('body').value = bodyMatch ? bodyMatch[1] : '';
+
+    _syncing = false;
+  }
+
+  // =====================
+  // 送信
+  // =====================
+
+  async function send() {
+    const method  = document.getElementById('method').value;
+    const url     = document.getElementById('url').value.trim();
+    const body    = document.getElementById('body').value.trim();
+    const headers = collectHeaders();
+    const status  = document.getElementById('status');
+    const result  = document.getElementById('result');
+
+    const options = { method, headers };
+    if (method === 'POST' && body) {
+      headers['Content-Type'] = 'application/json';
+      options.body = body;
+    }
+
+    try {
+      const res = await fetch(url, options);
+      status.textContent = `${res.status} ${res.statusText}`;
+      status.className   = res.ok ? 'status ok' : 'status err';
+      const text = await res.text();
+      try {
+        result.textContent = JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        result.textContent = text;
+      }
+    } catch (e) {
+      status.textContent = 'エラー: サーバーに繋がりません';
+      status.className   = 'status err';
+      result.textContent = e.message;
+    }
+  }
+
+  // =====================
+  // ユーティリティ
+  // =====================
+
+  function copyCurl() {
+    navigator.clipboard.writeText(document.getElementById('curl').value);
+  }
+
+  function esc(s) {
+    return s.replace(/"/g, '&quot;');
+  }
+
+  // 初期化
+  addHeader('Authorization', '');
+  formToCurl();
+</script>
+</body>
+</html>
